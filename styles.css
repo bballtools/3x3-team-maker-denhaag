@@ -237,6 +237,35 @@ main {
     16px;
 }
 
+.setting-row[hidden] {
+  display: none;
+}
+
+.adult-only-setting {
+  flex-wrap: wrap;
+}
+
+.adult-only-setting label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.adult-only-setting input {
+  width: 18px;
+  height: 18px;
+}
+
+.setting-help {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+#adultOnlyStatus {
+  margin-top: -8px;
+}
+
 
 .counter {
   display:
