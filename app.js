@@ -33,6 +33,18 @@ let players = [];
 
 let courts = 2;
 
+const adultOnlyMode =
+  document.getElementById("adultOnlyMode");
+
+const adultCourtMaximum =
+  document.getElementById("adultCourtMaximum");
+
+const adultCourtSetting =
+  document.getElementById("adultCourtSetting");
+
+const adultOnlyStatus =
+  document.getElementById("adultOnlyStatus");
+
 let activeCategory =
   "All";
 
@@ -1444,6 +1456,8 @@ function updatePlayerSummary() {
 
   updateNewSessionButtonState();
 
+  updateAdultOnlySettings();
+
 }
 
 
@@ -2276,6 +2290,72 @@ function renderPlayerInterface() {
 // COURTS / FORMAT
 // ==================================================
 
+function updateAdultOnlySettings() {
+  const previousMaximum =
+    Number(adultCourtMaximum.value) || 1;
+
+  const adultCount = getPresentPlayers().filter(
+    player => player.category === "18+"
+  ).length;
+
+  const formatPreference =
+    document.getElementById("gameFormat").value;
+
+  const adultPreference =
+    formatPreference === "4" && adultCount < 8
+      ? "3"
+      : formatPreference;
+
+  const usableAdultCourts = adultCount >= 6
+    ? TeamOptimizer.choosePlan(
+        adultCount,
+        courts,
+        adultPreference
+      ).playableCourts
+    : 1;
+
+  const maximum = Math.max(
+    1,
+    Math.min(courts, usableAdultCourts)
+  );
+
+  adultCourtMaximum.replaceChildren();
+
+  for (let count = 1; count <= maximum; count++) {
+    const option = document.createElement("option");
+    option.value = String(count);
+    option.textContent = String(count);
+    adultCourtMaximum.appendChild(option);
+  }
+
+  adultCourtMaximum.value =
+    String(Math.min(previousMaximum, maximum));
+
+  adultCourtSetting.hidden = !adultOnlyMode.checked;
+
+  adultOnlyStatus.hidden =
+    !adultOnlyMode.checked || adultCount >= 6;
+
+  adultOnlyStatus.textContent =
+    `${adultCount} selected 18+ players. At least 6 are needed; normal mixing applies until then.`;
+}
+
+function adultOnlyOptions() {
+  return {
+    adultOnly: adultOnlyMode.checked,
+    maxAdultCourts: Number(adultCourtMaximum.value) || 1
+  };
+}
+
+adultOnlyMode.addEventListener("change", () => {
+  updateAdultOnlySettings();
+  invalidateResults();
+});
+
+adultCourtMaximum.addEventListener("change", invalidateResults);
+
+updateAdultOnlySettings();
+
 document
   .getElementById(
     "courtPlus"
@@ -2290,6 +2370,7 @@ document
       courtCount.textContent =
         courts;
 
+      updateAdultOnlySettings();
 
       invalidateResults();
 
@@ -2316,6 +2397,7 @@ document
         courtCount.textContent =
           courts;
 
+        updateAdultOnlySettings();
 
         invalidateResults();
 
@@ -2332,7 +2414,10 @@ document
   )
   .addEventListener(
     "change",
-    invalidateResults
+    () => {
+      updateAdultOnlySettings();
+      invalidateResults();
+    }
   );
 
 
@@ -3192,6 +3277,18 @@ function handlePlayerSwapClick(
   const secondPlayer =
     target.player;
 
+  if (
+    currentResult.plan.adultOnlyActive &&
+    (firstPlayer.category === "18+") !==
+      (secondPlayer.category === "18+")
+  ) {
+    selectedSwapPlayer = null;
+    lastSwapMessage =
+      "18+ players can only be swapped with other 18+ players while adult-only games are active.";
+    renderResult(currentResult, false);
+    return;
+  }
+
 
   if (
     first.location === "team" &&
@@ -3447,7 +3544,8 @@ async function generateInitialSuggestion(
         selectedPlayers,
         courts,
         formatPreference,
-        approvedFormations
+        approvedFormations,
+        adultOnlyOptions()
       );
 
 
@@ -3697,7 +3795,8 @@ async function generateTeams(
           selectedPlayers,
           courts,
           formatPreference,
-          approvedFormations
+          approvedFormations,
+          adultOnlyOptions()
         );
 
 
@@ -4094,6 +4193,10 @@ function renderResult(
   let historyNote =
     "";
 
+  const adultOnlyNote = plan.adultOnlyActive
+    ? `<div class="recommendation-note">18+ only vs 18+ · ${plan.adultCourtsUsed} adult ${plan.adultCourtsUsed === 1 ? "basket" : "baskets"} used.</div>`
+    : "";
+
 
   if (
     currentRepeatNotice
@@ -4212,6 +4315,8 @@ function renderResult(
 
       ${specialNote}
 
+      ${adultOnlyNote}
+
       ${historyNote}
 
       ${approvedNote}
@@ -4254,7 +4359,9 @@ function renderResult(
       const kidsLabel =
         game.specialKidsCourt
           ? " · Kids"
-          : "";
+          : game.adultOnly
+            ? " · 18+"
+            : "";
 
 
       court.innerHTML = `
