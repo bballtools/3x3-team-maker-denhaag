@@ -1886,3 +1886,18 @@ select {
   }
 
 }
+/* Completed games stay readable on phones and remain separate from approval. */
+.game-counter-panel { margin: 1rem 0; }
+.game-counter-panel p, .team-games { color: #555; font-size: .9rem; }
+.participation-list, .game-counter-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.participation-list { margin: 1rem 0; }
+.participation-player, .games-badge { border-radius: .4rem; padding: .25rem .45rem; background: #f0f1f3; font-size: .8rem; }
+.participation-player.fewer-games { background: #fff0cd; color: #654300; }
+.game-counter-panel summary { cursor: pointer; font-weight: 600; }
+.game-history-row { padding: .8rem 0; border-bottom: 1px solid #ddd; }
+.game-counter-actions { margin-top: .6rem; }
+.game-counter-actions button { width: auto; padding: .5rem .7rem; }
+.team-games { margin: .6rem 0 0; }
+.result-player-left { flex-wrap: wrap; gap: .2rem; }
+.games-badge { white-space: nowrap; }
+.game-history-row strong, .participation-player { overflow-wrap: anywhere; }
