@@ -1951,3 +1951,11 @@ select {
 .player-search-clear:hover { background: #e5e7eb; color: #111827; }
 .player-search-clear:focus-visible { outline: 2px solid #64748b; outline-offset: -2px; }
 .game-history-row strong, .participation-player { overflow-wrap: anywhere; }
+
+/* Temporary developer tools — remove with the matching HTML/JS section. */
+.developer-formation-tools { border: 1px dashed #94a3b8; }
+.developer-formation-tools button { padding: 10px 14px; cursor: pointer; }
+.developer-formation-tools p { margin: .6rem 0 0; color: #475569; font-size: .9rem; }
+.developer-formation-tools p:empty { display: none; }
+.developer-formation-tools textarea { width: 100%; min-height: 180px; margin-top: .6rem; font: 12px monospace; }
+/* End temporary developer tools. */

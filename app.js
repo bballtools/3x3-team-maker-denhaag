@@ -4249,6 +4249,135 @@ function updateRoundControls() {
 // RENDER RESULT
 // ==================================================
 
+// TEMPORARY DEVELOPER TOOLS — remove with the matching HTML/CSS section.
+function buildFormationReport() {
+  if (!currentResult) return null;
+  const counts = GameCounter.totals(approvedFormations);
+  const playerDetails = player => ({
+    id: player.id,
+    name: player.name,
+    ageCategory: player.category,
+    skill: player.skill,
+    gamesPlayed: counts.players.get(player.id) || 0
+  });
+  const teams = currentResult.teams.map(team => {
+    const game = currentResult.courtGames.find(game => game.team1.id === team.id || game.team2.id === team.id);
+    const totalSkill = team.players.reduce((sum, player) => sum + player.skill, 0);
+    const playerGames = team.players.map(player => counts.players.get(player.id) || 0);
+    return {
+      id: team.id,
+      name: team.name,
+      status: game ? "on court" : "waiting",
+      court: game?.court ?? null,
+      balancingGroup: currentResult.plan.specialKidsCourt && team.players.every(player => player.category === "Kids")
+        ? "Kids only"
+        : currentResult.plan.adultOnlyActive && team.players.every(player => player.category === "18+")
+          ? "18+ only" : "regular",
+      size: team.players.length,
+      totalSkill,
+      averageSkill: totalSkill / team.players.length,
+      ageDistribution: Object.fromEntries(CATEGORY_ORDER.map(category =>
+        [category, team.players.filter(player => player.category === category).length])),
+      skillDistribution: Object.fromEntries([1, 2, 3, 4, 5].map(skill =>
+        [skill, team.players.filter(player => player.skill === skill).length])),
+      lineupGamesPlayed: counts.lineups.get(GameCounter.lineupKey(team.players.map(player => player.id))) || 0,
+      playerGamesRange: { min: Math.min(...playerGames), max: Math.max(...playerGames) },
+      players: team.players.map(playerDetails)
+    };
+  });
+  const formation = currentRoundApproved
+    ? approvedFormations.find(formation => formation.round === currentRoundNumber) : null;
+  return {
+    report: "3x3 Team Maker — development formation report",
+    version: 1,
+    copiedAt: new Date().toISOString(),
+    sessionDate: getTodayKey(),
+    round: currentRoundNumber,
+    suggestion: suggestionNumber,
+    status: currentRoundApproved ? "approved" : "preview — not yet approved",
+    definitions: {
+      ages: "Age categories only; exact ages and birth dates are not stored.",
+      skill: "1 to 5 basketballs",
+      lineupGamesPlayed: "Completed games with this exact set of players, across all approved rounds in this session; team letters can change.",
+      playerGamesPlayed: "Completed games across all lineups in this session. Waiting and approval alone do not add games.",
+      history: "Approved lineups and matchups, including rounds with zero recorded games. Older rounds without gamesPlayed are counted as zero."
+    },
+    settings: {
+      availableBaskets: courts,
+      requestedFormat: document.getElementById("gameFormat").value,
+      ...adultOnlyOptions()
+    },
+    plan: { ...currentResult.plan },
+    attendance: getPresentPlayers().map(playerDetails),
+    balance: [...new Set(teams.map(team => team.balancingGroup))].map(group => {
+      const averages = teams.filter(team => team.balancingGroup === group).map(team => team.averageSkill);
+      return { group, teamCount: averages.length, minAverage: Math.min(...averages),
+        maxAverage: Math.max(...averages), averageGap: Math.max(...averages) - Math.min(...averages) };
+    }),
+    courts: currentResult.courtGames.map((game, index) => ({
+      court: game.court,
+      format: `${game.teamSize}v${game.teamSize}`,
+      kidsOnly: Boolean(game.specialKidsCourt),
+      adultOnly: Boolean(game.adultOnly),
+      team1: game.team1.id,
+      team2: game.team2.id,
+      gamesCompletedThisRound: GameCounter.count(formation?.matchups?.[index] || {})
+    })),
+    teams,
+    rotatingPlayers: currentResult.rotationPlayers.map(playerDetails),
+    // Clone history so the report is a snapshot, including IDs for teammate
+    // and opponent-repeat analysis and names for players who have since left.
+    approvedHistory: JSON.parse(JSON.stringify(approvedFormations))
+  };
+}
+
+async function copyFormationReport() {
+  const report = buildFormationReport();
+  if (!report) return;
+  const text = JSON.stringify(report, null, 2);
+  const button = document.getElementById("copyFormationReport");
+  const status = document.getElementById("formationReportStatus");
+  const manualCopy = document.getElementById("formationReportText");
+  button.disabled = true;
+  manualCopy.hidden = true;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+  } catch {
+    // Fallback for browsers that do not provide the modern clipboard API.
+    const temporary = document.createElement("textarea");
+    temporary.value = text;
+    temporary.style.position = "fixed";
+    temporary.style.opacity = "0";
+    temporary.setAttribute("readonly", "");
+    document.body.appendChild(temporary);
+    try {
+      temporary.select();
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    } finally {
+      temporary.remove();
+      button.focus();
+    }
+  } finally {
+    button.disabled = false;
+  }
+  if (copied) {
+    status.textContent = `Copied Round ${report.round} formation. Paste it into the development chat.`;
+  } else {
+    manualCopy.value = text;
+    manualCopy.hidden = false;
+    manualCopy.focus();
+    manualCopy.select();
+    status.textContent = "Clipboard access is unavailable. Copy the selected report below with Ctrl+C (or your device’s Copy command).";
+  }
+}
+
+document.getElementById("copyFormationReport").addEventListener("click", copyFormationReport);
+// END TEMPORARY DEVELOPER TOOLS.
+
 function renderResult(
   result,
   shouldScroll = true
@@ -4256,6 +4385,9 @@ function renderResult(
 
   currentResult =
     result;
+
+  document.getElementById("formationReportStatus").textContent = "";
+  document.getElementById("formationReportText").hidden = true;
 
 
   const plan =
