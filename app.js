@@ -77,6 +77,11 @@ let suggestionNumber = 0;
 
 let currentRoundApproved = false;
 
+let selectedMoveTeamId = null;
+const championshipMode = document.getElementById("championshipMode");
+const teamMoveStatus = document.getElementById("teamMoveStatus");
+const cancelTeamMove = document.getElementById("cancelTeamMove");
+
 let seenSuggestionSignatures =
   new Set();
 
@@ -675,6 +680,30 @@ function loadEveningSession() {
       approvedFormations.length +
       1;
 
+    if (stored.activeFormation && Array.isArray(stored.activeFormation.result?.teams) &&
+        approvedFormations.some(formation => formation.round === stored.activeFormation.round)) {
+      const active = stored.activeFormation;
+      currentResult = active.result;
+      const byId = new Map(currentResult.teams.map(team => [team.id, team]));
+      currentResult.courtGames.forEach(game => {
+        game.team1 = byId.get(game.team1.id);
+        game.team2 = byId.get(game.team2.id);
+        if (!game.team1 || !game.team2) throw new Error("Invalid saved court assignment");
+      });
+      currentResult.waitingTeams = currentResult.waitingTeams.map(team => byId.get(team.id));
+      currentRoundNumber = active.round;
+      currentRoundApproved = true;
+      championshipMode.checked = Boolean(currentResult.championshipMode);
+      presentPlayerIds = new Set(currentResult.teams.flatMap(team => team.players)
+        .concat(currentResult.rotationPlayers).map(player => player.id));
+      courts = active.settings.availableBaskets;
+      courtCount.textContent = courts;
+      document.getElementById("gameFormat").value = active.settings.requestedFormat;
+      kidsOnlyMode.checked = active.settings.kidsOnly;
+      adultOnlyMode.checked = active.settings.adultOnly;
+      adultCourtMaximum.value = String(active.settings.maxAdultCourts);
+    }
+
 
     renderEveningHistoryStatus();
 
@@ -689,6 +718,9 @@ function loadEveningSession() {
 
 
     approvedFormations = [];
+
+    currentResult = null;
+    currentRoundApproved = false;
 
     currentRoundNumber =
       1;
@@ -709,7 +741,12 @@ function saveEveningSession() {
     date:
       getTodayKey(),
 
-    approvedFormations
+    approvedFormations,
+    activeFormation: currentResult && currentRoundApproved ? {
+      round: currentRoundNumber,
+      result: currentResult,
+      settings: { availableBaskets: courts, requestedFormat: document.getElementById("gameFormat").value, ...adultOnlyOptions() }
+    } : null
 
   };
 
@@ -733,7 +770,7 @@ function saveEveningSession() {
 
 function gameCounterButtons(roundIndex, gameIndex, game) {
   return `<div class="game-counter-actions">
-    <span>${GameCounter.count(game)} completed</span>
+    <span>${GameCounter.count(game)} completed for this matchup</span>
     <button type="button" data-game-round="${roundIndex}" data-game-index="${gameIndex}" data-game-change="1">+1 game completed</button>
     <button type="button" class="secondary" data-game-round="${roundIndex}" data-game-index="${gameIndex}" data-game-change="-1" ${GameCounter.count(game) === 0 ? "disabled" : ""}>Undo 1 game</button>
   </div>`;
@@ -867,6 +904,9 @@ function startNewSession() {
 
   approvedFormations =
     [];
+
+  selectedMoveTeamId = null;
+  championshipMode.checked = false;
 
 
   presentPlayerIds =
@@ -1177,6 +1217,8 @@ async function loadPlayers() {
 
 
     renderPlayerInterface();
+
+    if (currentResult && currentRoundApproved) renderResult(currentResult, false);
 
   }
 
@@ -2526,6 +2568,7 @@ function resetAlternativeHistory() {
 // ==================================================
 
 function invalidateResults() {
+  selectedMoveTeamId = null;
 
   currentResult =
     null;
@@ -2557,6 +2600,8 @@ function invalidateResults() {
 
   updateNewSessionButtonState();
 
+  saveEveningSession();
+
 }
 
 
@@ -2564,6 +2609,171 @@ function invalidateResults() {
 // ==================================================
 // RESULT DISPLAY HELPERS
 // ==================================================
+
+function currentStoredFormation() {
+  return currentRoundApproved
+    ? approvedFormations.find(formation => formation.round === currentRoundNumber) : null;
+}
+
+function teamGroup(team) {
+  if (currentResult.plan.specialKidsCourt && team.players.every(player => player.category === "Kids")) return "Kids";
+  if (currentResult.plan.adultOnlyActive && team.players.every(player => player.category === "18+")) return "18+";
+  return "regular";
+}
+
+function canAssignSubstitute(player, team) {
+  if (team.players.length >= team.teamSize + 1) return false;
+  if (currentResult.plan.specialKidsCourt && (player.category === "Kids") !== (teamGroup(team) === "Kids")) return false;
+  if (currentResult.plan.adultOnlyActive && (player.category === "18+") !== (teamGroup(team) === "18+")) return false;
+  return true;
+}
+
+function matchupRecord(game) {
+  return {
+    court: game.court,
+    team1Id: game.team1.id, team2Id: game.team2.id,
+    team1Name: game.team1.name, team2Name: game.team2.name,
+    team1: game.team1.players.map(player => player.id),
+    team2: game.team2.players.map(player => player.id),
+    participatingPlayerIds: game.participatingPlayerIds || game.team1.players.concat(game.team2.players).map(player => player.id),
+    gamesPlayed: 0
+  };
+}
+
+// Keep every played matchup immutable. A changed assignment, roster or list
+// of participants starts a new counter instead of rewriting previous games.
+function syncCurrentMatchups() {
+  const formation = currentStoredFormation();
+  if (!formation) return;
+  currentResult.courtGames.forEach((game, index) => {
+    const record = matchupRecord(game);
+    const previous = formation.matchups[game.historyIndex ?? index];
+    const sameIds = (a, b) => GameCounter.lineupKey(a || []) === GameCounter.lineupKey(b || []);
+    const same = previous && previous.court === record.court &&
+      sameIds(previous.team1, record.team1) && sameIds(previous.team2, record.team2) &&
+      sameIds(previous.participatingPlayerIds || previous.team1.concat(previous.team2), record.participatingPlayerIds);
+    if (same) {
+      game.historyIndex ??= index;
+      previous.team1Id = record.team1Id;
+      previous.team2Id = record.team2Id;
+    } else {
+      game.historyIndex = formation.matchups.length;
+      formation.matchups.push(record);
+    }
+  });
+}
+
+function finishTeamChange(message) {
+  selectedSwapPlayer = null;
+  selectedMoveTeamId = null;
+  currentResult.plan.individualRotation = currentResult.rotationPlayers.length;
+  syncCurrentMatchups();
+  if (currentRoundApproved) saveEveningSession();
+  renderResult(currentResult, false);
+  teamMoveStatus.textContent = message;
+}
+
+function handleTeamMove(teamId) {
+  if (!currentResult?.championshipMode || !findTeam(teamId)) return;
+  if (!selectedMoveTeamId) {
+    selectedMoveTeamId = teamId;
+    renderResult(currentResult, false);
+    return;
+  }
+  if (selectedMoveTeamId === teamId) {
+    selectedMoveTeamId = null;
+    renderResult(currentResult, false);
+    return;
+  }
+  const first = findTeam(selectedMoveTeamId);
+  const second = findTeam(teamId);
+  if (first.teamSize !== second.teamSize || teamGroup(first) !== teamGroup(second)) {
+    teamMoveStatus.textContent = "Choose a team from the same group and game format. Kids-only and adult-only groups stay separate.";
+    return;
+  }
+  const firstOnCourt = currentResult.courtGames.some(game => game.team1.id === first.id || game.team2.id === first.id);
+  const secondOnCourt = currentResult.courtGames.some(game => game.team1.id === second.id || game.team2.id === second.id);
+  if (!firstOnCourt && !secondOnCourt) {
+    teamMoveStatus.textContent = "Select a team on court to exchange with this waiting team.";
+    return;
+  }
+  const replace = team => team.id === first.id ? second : team.id === second.id ? first : team;
+  currentResult.courtGames.forEach(game => {
+    if ([game.team1.id, game.team2.id].some(id => id === first.id || id === second.id)) {
+      game.team1 = replace(game.team1);
+      game.team2 = replace(game.team2);
+      delete game.participatingPlayerIds;
+    }
+  });
+  currentResult.waitingTeams = currentResult.waitingTeams.map(replace);
+  finishTeamChange(`Moved ${first.name} and ${second.name}. No game was added. Record the next game when it finishes.`);
+}
+
+function assignSubstitute(playerId, teamId) {
+  if (!currentResult) return;
+  const player = currentResult.rotationPlayers.find(player => player.id === playerId);
+  const team = findTeam(teamId);
+  if (!player || !team || !canAssignSubstitute(player, team)) return;
+  team.players.push(player);
+  team.substituteIds = [...(team.substituteIds || []), player.id];
+  currentResult.rotationPlayers = currentResult.rotationPlayers.filter(candidate => candidate.id !== player.id);
+  recalculateTeam(team);
+  currentResult.courtGames.filter(game => game.team1.id === team.id || game.team2.id === team.id)
+    .forEach(game => { delete game.participatingPlayerIds; });
+  finishTeamChange(`${player.name} joins ${team.name} as a substitute. The game stays ${team.teamSize}v${team.teamSize}.`);
+}
+
+function returnSubstitute(playerId, teamId) {
+  const team = findTeam(teamId);
+  if (!team?.substituteIds?.includes(playerId)) return;
+  const player = team.players.find(player => player.id === playerId);
+  team.players = team.players.filter(player => player.id !== playerId);
+  team.substituteIds = team.substituteIds.filter(id => id !== playerId);
+  currentResult.rotationPlayers.push(player);
+  recalculateTeam(team);
+  currentResult.courtGames.filter(game => game.team1.id === team.id || game.team2.id === team.id)
+    .forEach(game => { delete game.participatingPlayerIds; });
+  finishTeamChange(`${player.name} is back in unassigned rotation. Earlier game counts are unchanged.`);
+}
+
+championshipMode.addEventListener("change", () => {
+  if (!currentResult) return;
+  currentResult.championshipMode = championshipMode.checked;
+  selectedMoveTeamId = null;
+  selectedSwapPlayer = null;
+  if (currentRoundApproved) saveEveningSession();
+  renderResult(currentResult, false);
+});
+
+cancelTeamMove.addEventListener("click", () => {
+  selectedMoveTeamId = null;
+  if (currentResult) renderResult(currentResult, false);
+});
+
+resultsSection.addEventListener("click", event => {
+  const move = event.target.closest("button[data-move-team]");
+  if (move) handleTeamMove(move.dataset.moveTeam);
+  const assign = event.target.closest("button[data-assign-substitute]");
+  if (assign) {
+    const select = document.getElementById(assign.dataset.selectId);
+    assignSubstitute(assign.dataset.assignSubstitute, select.value);
+  }
+  const release = event.target.closest("button[data-return-substitute]");
+  if (release) returnSubstitute(release.dataset.returnSubstitute, release.dataset.teamId);
+});
+
+resultsSection.addEventListener("change", event => {
+  const input = event.target.closest("input[data-game-participant]");
+  if (!input) return;
+  const game = currentResult.courtGames.find(game => game.court === Number(input.dataset.court));
+  if (!game) return;
+  const ids = game.participatingPlayerIds || game.team1.players.concat(game.team2.players).map(player => player.id);
+  game.participatingPlayerIds = input.checked ? [...new Set([...ids, input.dataset.gameParticipant])]
+    : ids.filter(id => id !== input.dataset.gameParticipant);
+  syncCurrentMatchups();
+  if (currentRoundApproved) saveEveningSession();
+  renderResult(currentResult, false);
+});
 
 function playerRow(
   player,
@@ -2609,6 +2819,8 @@ function playerRow(
 
         <span class="games-badge">${GameCounter.totals(approvedFormations).players.get(player.id) || 0} games played</span>
 
+        ${findTeam(teamId)?.substituteIds?.includes(player.id) ? '<span class="substitute-badge">Substitute</span>' : ""}
+
       </span>
 
       <span class="result-skill">
@@ -2633,6 +2845,11 @@ function teamCard(team) {
   const minimum = Math.min(...played);
   const maximum = Math.max(...played);
   const lineupGames = counts.lineups.get(GameCounter.lineupKey(team.players.map(player => player.id))) || 0;
+  const formation = currentStoredFormation();
+  const teamGames = (formation?.matchups || []).filter(game => game.team1Id === team.id || game.team2Id === team.id)
+    .reduce((sum, game) => sum + GameCounter.count(game), 0);
+  const substituteControls = team.players.filter(player => team.substituteIds?.includes(player.id)).map(player =>
+    `<button type="button" class="secondary" data-return-substitute="${escapeHtml(player.id)}" data-team-id="${escapeHtml(team.id)}">Return ${escapeHtml(player.name)} to rotation</button>`).join("");
 
   const playersHtml =
     team.players
@@ -2648,7 +2865,7 @@ function teamCard(team) {
 
   return `
 
-    <div class="team-card">
+    <div class="team-card${selectedMoveTeamId === team.id ? " selected-move-team" : ""}">
 
       <div class="team-header">
 
@@ -2664,7 +2881,9 @@ function teamCard(team) {
 
       ${playersHtml}
 
-      <p class="team-games">This lineup: ${lineupGames} games · Players: ${minimum === maximum ? minimum : `${minimum}–${maximum}`} games each</p>
+      <p class="team-games">${team.teamSize} on court${team.substituteIds?.length ? " + 1 substitute" : ""} · Team: ${teamGames} games this formation · This lineup: ${lineupGames} games · Players: ${minimum === maximum ? minimum : `${minimum}–${maximum}`} games each</p>
+      ${currentResult.championshipMode ? `<button type="button" class="secondary move-team-button" data-move-team="${escapeHtml(team.id)}" aria-pressed="${selectedMoveTeamId === team.id}">${selectedMoveTeamId === team.id ? "Selected — cancel" : selectedMoveTeamId ? "Exchange with selected team" : "Move team"}</button>` : ""}
+      <div class="substitute-controls">${substituteControls}</div>
 
     </div>
 
@@ -2692,7 +2911,11 @@ function rotationPlayerRow(
       : "";
 
 
+  const eligible = currentResult.teams.filter(team => canAssignSubstitute(player, team));
+  const selectorId = `substituteTeam_${player.id}`;
   return `
+
+    <div class="rotation-assignment">
 
     <button
       type="button"
@@ -2725,6 +2948,16 @@ function rotationPlayerRow(
       </span>
 
     </button>
+
+    <div class="substitute-assignment">
+      <label for="${escapeHtml(selectorId)}">Assign ${escapeHtml(player.name)} to</label>
+      <select id="${escapeHtml(selectorId)}" ${eligible.length ? "" : "disabled"}>
+        ${eligible.map(team => `<option value="${escapeHtml(team.id)}">${escapeHtml(team.name)} · Avg ${team.averageSkill.toFixed(1)}</option>`).join("")}
+      </select>
+      <button type="button" class="secondary" data-assign-substitute="${escapeHtml(player.id)}" data-select-id="${escapeHtml(selectorId)}" ${eligible.length ? "" : "disabled"}>Assign as substitute</button>
+      ${eligible.length ? "" : "<span>No compatible team has space for an extra player.</span>"}
+    </div>
+    </div>
 
   `;
 
@@ -2997,29 +3230,7 @@ function createStoredFormation(
           )
       ),
 
-    matchups:
-      result.courtGames.map(
-        game => ({
-
-          court: game.court,
-          team1Name: game.team1.name,
-          team2Name: game.team2.name,
-          gamesPlayed: 0,
-
-          team1:
-            game.team1.players.map(
-              player =>
-                player.id
-            ),
-
-          team2:
-            game.team2.players.map(
-              player =>
-                player.id
-            )
-
-        })
-      ),
+    matchups: result.courtGames.map(matchupRecord),
 
     rotation:
       result.rotationPlayers.map(
@@ -3370,6 +3581,13 @@ function handlePlayerSwapClick(
   const secondPlayer =
     target.player;
 
+  // Substitute status belongs to a roster slot when players are exchanged.
+  const replaceSubstitute = (selection, outgoing, incoming) => {
+    if (selection.location === "team") {
+      selection.team.substituteIds = (selection.team.substituteIds || []).map(id => id === outgoing.id ? incoming.id : id);
+    }
+  };
+
   if (
     currentResult.plan.specialKidsCourt &&
     (firstPlayer.category === "Kids") !== (secondPlayer.category === "Kids")
@@ -3472,6 +3690,8 @@ function handlePlayerSwapClick(
   }
 
 
+  replaceSubstitute(first, firstPlayer, secondPlayer);
+  replaceSubstitute(target, secondPlayer, firstPlayer);
   lastSwapMessage =
     `Swapped ${firstPlayer.name} and ${secondPlayer.name}.`;
 
@@ -3724,6 +3944,7 @@ async function generateInitialSuggestion(
 async function generateTeams(
   alternative = false
 ) {
+  selectedMoveTeamId = null;
 
   const selectedPlayers =
     getPresentPlayers();
@@ -4043,11 +4264,11 @@ function approveCurrentFormation() {
   );
 
 
-  saveEveningSession();
-
-
   currentRoundApproved =
     true;
+
+  currentResult.courtGames.forEach((game, index) => { game.historyIndex = index; });
+  saveEveningSession();
 
 
   selectedSwapPlayer =
@@ -4193,7 +4414,9 @@ function updateRoundControls() {
 
 
     roundActionHelp.textContent =
-      `Round ${currentRoundNumber} is recorded as used. After the games, reset and remix for the next round.`;
+      currentResult.championshipMode
+        ? `Formation ${currentRoundNumber} is approved. Record each game, then move teams manually. Reset & remix creates entirely new teams.`
+        : `Round ${currentRoundNumber} is approved. Record completed games. Enable Championship mode to bring waiting teams on without remixing.`;
 
 
     return;
@@ -4274,6 +4497,11 @@ function buildFormationReport() {
         : currentResult.plan.adultOnlyActive && team.players.every(player => player.category === "18+")
           ? "18+ only" : "regular",
       size: team.players.length,
+      onCourtSize: team.teamSize,
+      substituteIds: [...(team.substituteIds || [])],
+      teamGamesThisFormation: (currentStoredFormation()?.matchups || [])
+        .filter(game => game.team1Id === team.id || game.team2Id === team.id)
+        .reduce((sum, game) => sum + GameCounter.count(game), 0),
       totalSkill,
       averageSkill: totalSkill / team.players.length,
       ageDistribution: Object.fromEntries(CATEGORY_ORDER.map(category =>
@@ -4289,7 +4517,8 @@ function buildFormationReport() {
     ? approvedFormations.find(formation => formation.round === currentRoundNumber) : null;
   return {
     report: "3x3 Team Maker — development formation report",
-    version: 1,
+    version: 2,
+    championshipMode: Boolean(currentResult.championshipMode),
     copiedAt: new Date().toISOString(),
     sessionDate: getTodayKey(),
     round: currentRoundNumber,
@@ -4300,6 +4529,8 @@ function buildFormationReport() {
       skill: "1 to 5 basketballs",
       lineupGamesPlayed: "Completed games with this exact set of players, across all approved rounds in this session; team letters can change.",
       playerGamesPlayed: "Completed games across all lineups in this session. Waiting and approval alone do not add games.",
+      substitutes: "A team can have one extra player while onCourtSize and game format stay unchanged. Counts include only participatingPlayerIds for each completed matchup; all roster members are selected by default.",
+      teamGamesThisFormation: "Completed games for this team ID in this formation, even if substitute assignments change. Lineup counts remain specific to an exact roster.",
       history: "Approved lineups and matchups, including rounds with zero recorded games. Older rounds without gamesPlayed are counted as zero."
     },
     settings: {
@@ -4321,7 +4552,11 @@ function buildFormationReport() {
       adultOnly: Boolean(game.adultOnly),
       team1: game.team1.id,
       team2: game.team2.id,
-      gamesCompletedThisRound: GameCounter.count(formation?.matchups?.[index] || {})
+      matchupHistoryIndex: game.historyIndex ?? index,
+      participatingPlayerIds: game.participatingPlayerIds || game.team1.players.concat(game.team2.players).map(player => player.id),
+      gamesCompletedThisMatchup: GameCounter.count(formation?.matchups?.[game.historyIndex ?? index] || {}),
+      gamesCompletedThisRound: (formation?.matchups || []).filter(matchup => matchup.court === game.court)
+        .reduce((sum, matchup) => sum + GameCounter.count(matchup), 0)
     })),
     teams,
     rotatingPlayers: currentResult.rotationPlayers.map(playerDetails),
@@ -4378,6 +4613,17 @@ async function copyFormationReport() {
 document.getElementById("copyFormationReport").addEventListener("click", copyFormationReport);
 // END TEMPORARY DEVELOPER TOOLS.
 
+function participationControls(game) {
+  if (!game.team1.substituteIds?.length && !game.team2.substituteIds?.length) return "";
+  const members = game.team1.players.concat(game.team2.players);
+  const participants = game.participatingPlayerIds || members.map(player => player.id);
+  return `<fieldset class="participation-controls"><legend>Who took part in the game?</legend>
+    <p>All team members are counted by default, including substitutes who rotated in. Untick anyone who did not play before recording the completed game. Earlier games stay unchanged.</p>
+    ${[game.team1, game.team2].map(team => `<div><strong>${escapeHtml(team.name)}</strong>${team.players.map(player =>
+      `<label><input type="checkbox" data-game-participant="${escapeHtml(player.id)}" data-court="${game.court}" ${participants.includes(player.id) ? "checked" : ""}> ${escapeHtml(player.name)}${team.substituteIds?.includes(player.id) ? " (substitute)" : ""}</label>`).join("")}</div>`).join("")}
+    </fieldset>`;
+}
+
 function renderResult(
   result,
   shouldScroll = true
@@ -4385,6 +4631,13 @@ function renderResult(
 
   currentResult =
     result;
+
+  result.championshipMode ??= championshipMode.checked;
+  championshipMode.checked = Boolean(result.championshipMode);
+  cancelTeamMove.hidden = !selectedMoveTeamId;
+  teamMoveStatus.textContent = selectedMoveTeamId
+    ? `${findTeam(selectedMoveTeamId)?.name || "Team"} selected. Now select the team to exchange it with, on court or waiting.`
+    : result.championshipMode ? "Use Move team on two compatible teams to exchange their positions. Record games before moving teams." : "";
 
   document.getElementById("formationReportStatus").textContent = "";
   document.getElementById("formationReportText").hidden = true;
@@ -4622,7 +4875,8 @@ function renderResult(
 
         </div>
 
-        ${currentRoundApproved ? gameCounterButtons(approvedFormations.length - 1, result.courtGames.indexOf(game), approvedFormations[approvedFormations.length - 1].matchups[result.courtGames.indexOf(game)]) : '<p class="explanation">Approve this formation to record completed games.</p>'}
+        ${participationControls(game)}
+        ${currentRoundApproved ? gameCounterButtons(approvedFormations.indexOf(currentStoredFormation()), game.historyIndex ?? result.courtGames.indexOf(game), currentStoredFormation().matchups[game.historyIndex ?? result.courtGames.indexOf(game)]) : '<p class="explanation">Approve this formation to record completed games.</p>'}
 
       `;
 
@@ -4667,7 +4921,7 @@ function renderResult(
 
 
     waitingTitle.textContent =
-      result.waitingTeams.length === 1
+      result.championshipMode ? "Waiting teams — choose manually" : result.waitingTeams.length === 1
         ? "Next team"
         : "Next teams";
 

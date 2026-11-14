@@ -20,7 +20,9 @@
           if (!Array.isArray(ids)) return;
           const key = lineupKey(ids);
           lineups.set(key, (lineups.get(key) || 0) + played);
-          new Set(ids).forEach(id => players.set(id, (players.get(id) || 0) + played));
+          const participants = Array.isArray(game.participatingPlayerIds)
+            ? ids.filter(id => game.participatingPlayerIds.includes(id)) : ids;
+          new Set(participants).forEach(id => players.set(id, (players.get(id) || 0) + played));
         });
       });
     });

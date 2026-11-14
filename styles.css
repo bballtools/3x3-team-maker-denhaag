@@ -1959,3 +1959,18 @@ select {
 .developer-formation-tools p:empty { display: none; }
 .developer-formation-tools textarea { width: 100%; min-height: 180px; margin-top: .6rem; font: 12px monospace; }
 /* End temporary developer tools. */
+
+.championship-controls { border-left: 5px solid #2563eb; }
+.championship-controls > label { display: flex; align-items: center; gap: .6rem; font-weight: 700; }
+.championship-controls input { width: 18px; height: 18px; }
+.championship-controls p { color: #475569; line-height: 1.45; }
+.selected-move-team { outline: 3px solid #2563eb; outline-offset: 2px; }
+.move-team-button { margin-top: .7rem; }
+.substitute-badge { background: #dbeafe; color: #1e40af; padding: .2rem .4rem; border-radius: .4rem; font-size: .75rem; }
+.substitute-controls, .substitute-assignment { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .6rem; }
+.substitute-assignment select { min-width: 0; max-width: 100%; padding: .5rem; }
+.rotation-assignment { padding-bottom: 1rem; }
+.participation-controls { border: 1px solid #cbd5e1; border-radius: .5rem; margin-top: 1rem; }
+.participation-controls p { color: #475569; font-size: .85rem; }
+.participation-controls > div { margin: .5rem 0; }
+.participation-controls label { display: inline-flex; align-items: center; gap: .3rem; margin: .4rem .7rem .4rem 0; }

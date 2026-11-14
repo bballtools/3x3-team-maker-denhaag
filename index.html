@@ -480,6 +480,13 @@
     </section>
     <!-- End temporary developer tools. -->
 
+    <section class="card championship-controls">
+      <label for="championshipMode"><input id="championshipMode" type="checkbox"> Championship mode — move teams manually</label>
+      <p>Keep the same teams. Record a completed game, then select “Move team” on a waiting team and on the team it replaces. You decide who stays after a win and who rests after two wins. Moving teams does not record a game.</p>
+      <p id="teamMoveStatus" role="status" aria-live="polite"></p>
+      <button id="cancelTeamMove" type="button" class="secondary" hidden>Cancel team move</button>
+    </section>
+
     <section class="card round-controls-card">
 
       <div class="round-controls-header">
@@ -596,12 +603,12 @@
     >
 
       <h2>
-        Initial rotation
+        Unassigned rotating players
       </h2>
 
       <p class="explanation">
-        These players rotate into the games.
-        Tap a rotating player and then a team player to exchange them.
+        Use “Assign as substitute” to give a team one extra player for in-game rotation.
+        The number of players on court stays the same. Before approval, you can also tap two players to swap them.
       </p>
 
       <div id="rotationPlayers"></div>
