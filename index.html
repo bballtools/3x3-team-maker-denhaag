@@ -127,6 +127,16 @@
 
 
     <div class="setting-row adult-only-setting">
+      <label for="kidsOnlyMode">
+        <input id="kidsOnlyMode" type="checkbox" aria-describedby="kidsOnlyStatus">
+        Reserve one basket for Kids only
+      </label>
+    </div>
+    <p id="kidsOnlyStatus" class="setting-help" aria-live="polite">
+      Off: Kids are mixed into regular teams. Requires at least 6 selected Kids for a separate 3v3 basket.
+    </p>
+
+    <div class="setting-row adult-only-setting">
 
       <label for="adultOnlyMode">
         <input id="adultOnlyMode" type="checkbox">
@@ -216,6 +226,14 @@
     ></div>
 
 
+
+    <div class="player-search">
+      <label for="playerSearch">Search players</label>
+      <div class="player-search-controls">
+        <input id="playerSearch" type="search" placeholder="Search by name…" autocomplete="off" aria-controls="playerList">
+        <button id="clearPlayerSearch" type="button" class="secondary" hidden>Clear search</button>
+      </div>
+    </div>
 
     <div class="player-toolbar">
 

@@ -2399,6 +2399,55 @@
   // OPTIONAL ADULT-ONLY SESSION
   // ==================================================
 
+  function generateKidsOnlySession(selectedPlayers, courts, formatPreference, historyStats, options) {
+    const kids = selectedPlayers.filter(player => player.category === "Kids");
+    const others = selectedPlayers.filter(player => player.category !== "Kids");
+    const kidsPlan = choosePlan(kids.length, 1, "3");
+    const kidsResult = buildStandardSession(kids, kidsPlan, 0, 0, historyStats);
+    kidsResult.courtGames.forEach(game => { game.specialKidsCourt = true; });
+
+    let otherResult = null;
+    if (others.length >= 6) {
+      const adultCount = others.filter(player => player.category === "18+").length;
+      if (options.adultOnly === true && adultCount >= 6) {
+        otherResult = generateAdultOnlySession(others, courts - 1, formatPreference,
+          historyStats, Number.isInteger(options.maxAdultCourts) ? options.maxAdultCourts : 1);
+      } else {
+        const preference = formatPreference === "4" && others.length < 8 ? "3" : formatPreference;
+        otherResult = generateStandardSession(others, courts - 1, preference, historyStats);
+      }
+      otherResult.teams.forEach((team, index) => {
+        const teamIndex = kidsResult.teams.length + index;
+        team.id = `T${teamIndex + 1}`;
+        team.name = `Team ${teamLetter(teamIndex)}`;
+      });
+      otherResult.courtGames.forEach(game => { game.court++; });
+    }
+
+    const teams = [...kidsResult.teams, ...(otherResult?.teams || [])];
+    const courtGames = [...kidsResult.courtGames, ...(otherResult?.courtGames || [])];
+    const waitingTeams = [...kidsResult.waitingTeams, ...(otherResult?.waitingTeams || [])];
+    const rotationPlayers = [...kidsResult.rotationPlayers, ...(otherResult?.rotationPlayers || others)];
+    const formats = [...new Set(teams.map(team => `${team.teamSize} vs ${team.teamSize}`))];
+    return {
+      plan: {
+        valid: true,
+        specialKidsCourt: true,
+        adultOnlyActive: Boolean(otherResult?.plan.adultOnlyActive),
+        adultCourtsUsed: otherResult?.plan.adultCourtsUsed || 0,
+        formatLabel: formats.join(" + "),
+        mixedFormats: formats.length > 1,
+        teamSize: formats.length === 1 ? 3 : null,
+        completeTeams: teams.length,
+        playableCourts: courtGames.length,
+        waitingTeams: waitingTeams.length,
+        individualRotation: rotationPlayers.length,
+        unusedCourts: courts - courtGames.length
+      },
+      teams, courtGames, waitingTeams, rotationPlayers
+    };
+  }
+
   function generateAdultOnlySession(
     selectedPlayers,
     courts,
@@ -2450,23 +2499,6 @@
     let youngerResult = null;
 
     if (younger.length >= 6) {
-      const kidsCount = younger.filter(
-        player => player.category === "Kids"
-      ).length;
-
-      if (
-        formatPreference === "auto" &&
-        youngerCourts > 0 &&
-        kidsCount >= 2 &&
-        kidsCount < 6
-      ) {
-        youngerResult = generateSpecialKidsSession(
-          younger,
-          youngerCourts,
-          historyStats
-        );
-      }
-
       if (!youngerResult) {
         const youngerPreference =
           formatPreference === "4" && younger.length < 8
@@ -2514,8 +2546,8 @@
 
     const formats = [
       ...new Set(
-        courtGames.map(
-          game => `${game.teamSize} vs ${game.teamSize}`
+        teams.map(
+          team => `${team.teamSize} vs ${team.teamSize}`
         )
       )
     ];
@@ -2533,7 +2565,7 @@
         adultOnlyActive: true,
         adultCourtsUsed,
         teamSize: formats.length === 1
-          ? courtGames[0].teamSize
+          ? teams[0].teamSize
           : null,
         completeTeams: teams.length,
         playableCourts,
@@ -2678,6 +2710,10 @@
       player => player.category === "18+"
     ).length;
 
+    if (options.kidsOnly === true && selectedPlayers.filter(player => player.category === "Kids").length >= 6) {
+      return generateKidsOnlySession(selectedPlayers, courts, formatPreference, historyStats, options);
+    }
+
     if (options.adultOnly === true && adultCount >= 6) {
       const requestedMaximum = Number.isInteger(
         options.maxAdultCourts
@@ -2692,34 +2728,6 @@
         historyStats,
         requestedMaximum
       );
-    }
-
-    if (
-      formatPreference === "auto"
-    ) {
-      const kids =
-        selectedPlayers.filter(
-          player =>
-            player.category === "Kids"
-        );
-
-      if (
-        kids.length >= 2 &&
-        kids.length < 6
-      ) {
-        const specialResult =
-          generateSpecialKidsSession(
-            selectedPlayers,
-            courts,
-            historyStats
-          );
-
-        if (
-          specialResult
-        ) {
-          return specialResult;
-        }
-      }
     }
 
     return generateStandardSession(

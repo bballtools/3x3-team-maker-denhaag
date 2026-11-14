@@ -45,6 +45,11 @@ const adultCourtSetting =
 const adultOnlyStatus =
   document.getElementById("adultOnlyStatus");
 
+const kidsOnlyMode = document.getElementById("kidsOnlyMode");
+const kidsOnlyStatus = document.getElementById("kidsOnlyStatus");
+const playerSearch = document.getElementById("playerSearch");
+const clearPlayerSearch = document.getElementById("clearPlayerSearch");
+
 let activeCategory =
   "All";
 
@@ -899,6 +904,9 @@ function startNewSession() {
     true;
 
 
+  playerSearch.value = "";
+  clearPlayerSearch.hidden = true;
+
   closeQuickAddForm();
 
 
@@ -1218,28 +1226,27 @@ function sortPlayersByName(
 // ==================================================
 
 function getVisiblePlayers() {
-
-  if (
-    activeCategory ===
-    "All"
-  ) {
-
-    return sortPlayersByName(
-      players
-    );
-
-  }
-
-
-  return sortPlayersByName(
-    players.filter(
-      player =>
-        player.category ===
-        activeCategory
-    )
-  );
-
+  const searchKey = name => normalizeName(name).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const query = searchKey(playerSearch.value);
+  return sortPlayersByName(players.filter(player =>
+    (activeCategory === "All" || player.category === activeCategory) &&
+    searchKey(player.name).includes(query)
+  ));
 }
+
+playerSearch.addEventListener("input", () => {
+  clearPlayerSearch.hidden = !playerSearch.value;
+  renderPlayers();
+  updatePlayerSummary();
+});
+
+clearPlayerSearch.addEventListener("click", () => {
+  playerSearch.value = "";
+  clearPlayerSearch.hidden = true;
+  renderPlayers();
+  updatePlayerSummary();
+  playerSearch.focus();
+});
 
 
 
@@ -1471,7 +1478,7 @@ function renderPlayers() {
     playerList.innerHTML = `
 
       <div class="empty-player-list">
-        No players in this category yet.
+        ${playerSearch.value.trim() ? "No players match your search in this category." : "No players in this category yet."}
       </div>
 
     `;
@@ -2336,6 +2343,13 @@ function renderPlayerInterface() {
 // ==================================================
 
 function updateAdultOnlySettings() {
+  const kidsCount = getPresentPlayers().filter(player => player.category === "Kids").length;
+  const kidsBasketReserved = kidsOnlyMode.checked && kidsCount >= 6;
+  kidsOnlyStatus.textContent = !kidsOnlyMode.checked
+    ? "Off: Kids are mixed into regular teams. Requires at least 6 selected Kids for a separate 3v3 basket."
+    : kidsCount < 6
+      ? `${kidsCount} selected Kids. At least 6 are needed for Kids-only 3v3; Kids will be mixed until then.`
+      : `One basket reserved for Kids-only 3v3. Extra Kids wait or rotate within the Kids group.${courts === 1 ? " Other teams will wait because no basket remains." : ""}`;
   const previousMaximum =
     Number(adultCourtMaximum.value) || 1;
 
@@ -2354,7 +2368,7 @@ function updateAdultOnlySettings() {
   const usableAdultCourts = adultCount >= 6
     ? TeamOptimizer.choosePlan(
         adultCount,
-        courts,
+        Math.max(0, courts - (kidsBasketReserved ? 1 : 0)),
         adultPreference
       ).playableCourts
     : 1;
@@ -2387,6 +2401,7 @@ function updateAdultOnlySettings() {
 
 function adultOnlyOptions() {
   return {
+    kidsOnly: kidsOnlyMode.checked,
     adultOnly: adultOnlyMode.checked,
     maxAdultCourts: Number(adultCourtMaximum.value) || 1
   };
@@ -2398,6 +2413,11 @@ adultOnlyMode.addEventListener("change", () => {
 });
 
 adultCourtMaximum.addEventListener("change", invalidateResults);
+
+kidsOnlyMode.addEventListener("change", () => {
+  updateAdultOnlySettings();
+  invalidateResults();
+});
 
 updateAdultOnlySettings();
 
@@ -3342,6 +3362,16 @@ function handlePlayerSwapClick(
     target.player;
 
   if (
+    currentResult.plan.specialKidsCourt &&
+    (firstPlayer.category === "Kids") !== (secondPlayer.category === "Kids")
+  ) {
+    selectedSwapPlayer = null;
+    lastSwapMessage = "Kids can only be swapped with other Kids while the Kids-only basket is active.";
+    renderResult(currentResult, false);
+    return;
+  }
+
+  if (
     currentResult.plan.adultOnlyActive &&
     (firstPlayer.category === "18+") !==
       (secondPlayer.category === "18+")
@@ -4244,8 +4274,8 @@ function renderResult(
 
       <div class="recommendation-note">
 
-        Kids court reserved as 3v3.
-        Younger players are added where needed.
+        One basket reserved for Kids-only 3v3.
+        Extra Kids wait or rotate within the Kids group.
 
       </div>
 
