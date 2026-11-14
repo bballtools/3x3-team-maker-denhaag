@@ -179,7 +179,9 @@
       teammateCounts: new Map(),
       opponentCounts: new Map(),
       exactTeamCounts: new Map(),
-      exactMatchupCounts: new Map()
+      exactMatchupCounts: new Map(),
+      rotationCounts: new Map(),
+      lastRotationIds: new Set()
     };
 
     if (!Array.isArray(approvedHistory)) {
@@ -187,6 +189,13 @@
     }
 
     approvedHistory.forEach(formation => {
+      const rotationIds = new Set([
+        ...(Array.isArray(formation?.rotation) ? formation.rotation : []),
+        ...(Array.isArray(formation?.rotationRoleIds) ? formation.rotationRoleIds : []),
+        ...(Array.isArray(formation?.substitutePlayerIds) ? formation.substitutePlayerIds : [])
+      ]);
+      rotationIds.forEach(id => incrementMap(stats.rotationCounts, id));
+      stats.lastRotationIds = rotationIds;
       const storedTeams = Array.isArray(formation?.teams)
         ? formation.teams
         : [];
@@ -316,20 +325,14 @@
     const waitingTeams = completeTeams - teamsPlaying;
     const unusedCourts = Math.max(0, courts - playableCourts);
 
-    let score = 0;
-
-    score += individualRotation * 10;
-    score += waitingTeams * 5;
-    score += unusedCourts * 20;
-
-    // Auto mode should prefer 3v3 unless 4v4 is materially better.
-    if (teamSize === 4) {
-      score += 8;
-    }
+    const waitingPlayers = playerCount - teamsPlaying * teamSize - Math.min(individualRotation, teamsPlaying);
+    const score = waitingPlayers * 10000 + unusedCourts * 1000 + waitingTeams * 10 + teamSize;
 
     return {
       valid: true,
       score,
+      waitingPlayers,
+      playersOnCourt: teamsPlaying * teamSize,
       teamSize,
       completeTeams,
       individualRotation,
@@ -365,16 +368,22 @@
     }
 
     if (!plan4.valid) {
-      return plan3;
+      return { ...plan3, autoAssignRotation: true };
     }
 
     if (!plan3.valid) {
-      return plan4;
+      return { ...plan4, autoAssignRotation: true };
     }
 
-    return plan3.score <= plan4.score
-      ? plan3
-      : plan4;
+    // Auto treats attached substitutes as in-game rotation, rather than
+    // penalizing them like people who must wait for another match.
+    const plans = [plan3, plan4].sort((a, b) =>
+      a.waitingPlayers - b.waitingPlayers ||
+      a.unusedCourts - b.unusedCourts ||
+      a.waitingTeams - b.waitingTeams ||
+      b.playersOnCourt - a.playersOnCourt ||
+      a.teamSize - b.teamSize);
+    return { ...plans[0], autoAssignRotation: true };
   }
 
   // ==================================================
@@ -429,10 +438,23 @@
     return score;
   }
 
-  function selectRotationPlayers(players, rotationCount) {
+  function selectRotationPlayers(players, rotationCount, historyStats) {
     if (rotationCount === 0) {
       return [];
     }
+
+    // First minimize consecutive rotation roles, then total past roles.
+    // Restrict to the optimal history tiers before sampling so sampling can
+    // never reselect a previous substitute when enough fresh players exist.
+    const allPlayers = players;
+    const rank = player => [historyStats?.lastRotationIds.has(player.id) ? 1 : 0,
+      historyStats?.rotationCounts.get(player.id) || 0];
+    const compare = (a, b) => a[0] - b[0] || a[1] - b[1];
+    const ranked = [...players].sort((a, b) => compare(rank(a), rank(b)));
+    const cutoff = rank(ranked[rotationCount - 1]);
+    const mandatory = players.filter(player => compare(rank(player), cutoff) < 0);
+    players = players.filter(player => compare(rank(player), cutoff) === 0);
+    rotationCount -= mandatory.length;
 
     let candidates;
 
@@ -496,9 +518,10 @@
     let bestScore = Infinity;
 
     candidates.forEach(candidate => {
+      candidate = [...mandatory, ...candidate];
       const score =
         rotationCandidateScore(
-          players,
+          allPlayers,
           candidate
         );
 
@@ -516,11 +539,11 @@
 
     return (
       best ||
-      shuffle(players)
+      mandatory.concat(shuffle(players)
         .slice(
           0,
           rotationCount
-        )
+        ))
     );
   }
 
@@ -2034,7 +2057,8 @@
     const rotationPlayers =
       selectRotationPlayers(
         players,
-        plan.individualRotation
+        plan.individualRotation,
+        historyStats
       );
 
     const rotationIds =
@@ -2127,14 +2151,40 @@
       }
     );
 
-    return {
-      teams,
-      courtGames,
-      waitingTeams,
-      rotationPlayers,
-      nextTeamIndex:
-        teamIndex
-    };
+    if (plan.autoAssignRotation) {
+      const onCourt = new Set(courtGames.flatMap(game => [game.team1.id, game.team2.id]));
+      for (const player of [...rotationPlayers]) {
+        let available = teams.filter(team => team.players.length === team.teamSize);
+        const active = available.filter(team => onCourt.has(team.id));
+        if (active.length) available = active;
+        if (!available.length) break;
+        const score = team => {
+          const averages = teams.map(candidate => candidate === team
+            ? (candidate.totalSkill + player.skill) / (candidate.players.length + 1) : candidate.averageSkill);
+          return [Math.max(...averages) - Math.min(...averages),
+            averages.reduce((sum, value) => sum + Math.pow(value - averageSkill(players), 2), 0),
+            team.players.filter(member => member.category === player.category).length,
+            team.players.filter(member => member.skill === player.skill).length];
+        };
+        const compare = (a, b) => {
+          for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
+          return 0;
+        };
+        available = shuffle(available).sort((a, b) => compare(score(a), score(b)));
+        const team = available[0];
+        team.players.push(player);
+        team.substituteIds = [player.id];
+        team.totalSkill += player.skill;
+        team.averageSkill = team.totalSkill / team.players.length;
+        team.averageAgeRank = averageAgeRank(team.players);
+        rotationPlayers.splice(rotationPlayers.findIndex(candidate => candidate.id === player.id), 1);
+      }
+      plan.individualRotation = rotationPlayers.length;
+      plan.assignedSubstitutes = teams.reduce((sum, team) => sum + (team.substituteIds?.length || 0), 0);
+      plan.waitingPlayers = waitingTeams.reduce((sum, team) => sum + team.players.length, 0) + rotationPlayers.length;
+    }
+
+    return { teams, courtGames, waitingTeams, rotationPlayers, nextTeamIndex: teamIndex };
   }
 
   function generateStandardSession(
@@ -2442,6 +2492,8 @@
         playableCourts: courtGames.length,
         waitingTeams: waitingTeams.length,
         individualRotation: rotationPlayers.length,
+        assignedSubstitutes: teams.reduce((sum, team) => sum + (team.substituteIds?.length || 0), 0),
+        waitingPlayers: waitingTeams.reduce((sum, team) => sum + team.players.length, 0) + rotationPlayers.length,
         unusedCourts: courts - courtGames.length
       },
       teams, courtGames, waitingTeams, rotationPlayers
@@ -2571,6 +2623,8 @@
         playableCourts,
         waitingTeams: waitingTeams.length,
         individualRotation: rotationPlayers.length,
+        assignedSubstitutes: teams.reduce((sum, team) => sum + (team.substituteIds?.length || 0), 0),
+        waitingPlayers: waitingTeams.reduce((sum, team) => sum + team.players.length, 0) + rotationPlayers.length,
         unusedCourts: courts - playableCourts
       },
       teams,

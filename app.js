@@ -2645,6 +2645,12 @@ function matchupRecord(game) {
 function syncCurrentMatchups() {
   const formation = currentStoredFormation();
   if (!formation) return;
+  formation.substitutePlayerIds = currentResult.teams.flatMap(team => team.substituteIds || []);
+  formation.rotationRoleIds = [...new Set([
+    ...(formation.rotationRoleIds || formation.rotation || []),
+    ...formation.substitutePlayerIds,
+    ...currentResult.rotationPlayers.map(player => player.id)
+  ])];
   currentResult.courtGames.forEach((game, index) => {
     const record = matchupRecord(game);
     const previous = formation.matchups[game.historyIndex ?? index];
@@ -2667,6 +2673,8 @@ function finishTeamChange(message) {
   selectedSwapPlayer = null;
   selectedMoveTeamId = null;
   currentResult.plan.individualRotation = currentResult.rotationPlayers.length;
+  currentResult.plan.assignedSubstitutes = currentResult.teams.reduce((sum, team) => sum + (team.substituteIds?.length || 0), 0);
+  currentResult.plan.waitingPlayers = currentResult.waitingTeams.reduce((sum, team) => sum + team.players.length, 0) + currentResult.rotationPlayers.length;
   syncCurrentMatchups();
   if (currentRoundApproved) saveEveningSession();
   renderResult(currentResult, false);
@@ -3202,6 +3210,10 @@ function createStoredFormation(
 ) {
 
   return {
+
+    substitutePlayerIds: result.teams.flatMap(team => team.substituteIds || []),
+    rotationRoleIds: [...new Set(result.rotationPlayers.map(player => player.id)
+      .concat(result.teams.flatMap(team => team.substituteIds || [])))],
 
     participants: result.teams.flatMap(team => team.players).concat(result.rotationPlayers)
       .map(player => ({ id: player.id, name: player.name })),
@@ -4519,6 +4531,8 @@ function buildFormationReport() {
     report: "3x3 Team Maker — development formation report",
     version: 2,
     championshipMode: Boolean(currentResult.championshipMode),
+    rotationRoleIds: formation?.rotationRoleIds || currentResult.rotationPlayers.map(player => player.id)
+      .concat(currentResult.teams.flatMap(team => team.substituteIds || [])),
     copiedAt: new Date().toISOString(),
     sessionDate: getTodayKey(),
     round: currentRoundNumber,
@@ -4530,6 +4544,7 @@ function buildFormationReport() {
       lineupGamesPlayed: "Completed games with this exact set of players, across all approved rounds in this session; team letters can change.",
       playerGamesPlayed: "Completed games across all lineups in this session. Waiting and approval alone do not add games.",
       substitutes: "A team can have one extra player while onCourtSize and game format stay unchanged. Counts include only participatingPlayerIds for each completed matchup; all roster members are selected by default.",
+      rotationFairness: "The next mix avoids rotation/substitute roles from the latest approved formation when alternatives exist, then favors players with fewer past roles. Both unassigned rotation and attached substitutes count as a role.",
       teamGamesThisFormation: "Completed games for this team ID in this formation, even if substitute assignments change. Lineup counts remain specific to an exact roster.",
       history: "Approved lineups and matchups, including rounds with zero recorded games. Older rounds without gamesPlayed are counted as zero."
     },
@@ -4654,6 +4669,11 @@ function renderResult(
         ? `${plan.teamSize} vs ${plan.teamSize}`
         : "Mixed format"
     );
+
+  const assignedSubstitutes = result.teams.reduce((sum, team) => sum + (team.substituteIds?.length || 0), 0);
+  const autoRotationNote = document.getElementById("gameFormat").value === "auto" && assignedSubstitutes
+    ? `<div class="recommendation-note">${assignedSubstitutes} ${assignedSubstitutes === 1 ? "player assigned" : "players assigned"} to teams as substitutes for in-game rotation. You can return a substitute to rotation and assign them to another team. Substitute roles are shared across mixes when possible.</div>`
+    : "";
 
 
   let specialNote =
@@ -4794,7 +4814,7 @@ function renderResult(
           </strong>
 
           <span>
-            rotating players
+            unassigned rotating players
           </span>
 
         </div>
@@ -4802,6 +4822,8 @@ function renderResult(
       </div>
 
       ${specialNote}
+
+      ${autoRotationNote}
 
       ${adultOnlyNote}
 
