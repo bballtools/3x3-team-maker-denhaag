@@ -1817,6 +1817,144 @@
   // TEAM OBJECTS
   // ==================================================
 
+  // Optimize all regular teams together. Skill range and variance take
+  // precedence over composition, which takes precedence over repeat history.
+  function createGloballyBalancedStructure(players, plan, historyStats) {
+    const size = plan.teamSize;
+    const count = players.length / size;
+    const describe = team => {
+      const ages = CATEGORY_ORDER.map(category =>
+        team.filter(player => player.category === category).length);
+      const skills = [1, 2, 3, 4, 5].map(skill =>
+        team.filter(player => player.skill === skill).length);
+      return {
+        total: sumSkill(team),
+        composition: ages.reduce((sum, n) => sum + n * n, 0) * 2 +
+          skills.reduce((sum, n) => sum + n * n, 0) +
+          Math.max(0, skills[4] - 1) * 4,
+        history: teamHistoryScore(team, historyStats)
+      };
+    };
+    const objective = stats => {
+      const totals = stats.map(team => team.total);
+      return [
+        Math.max(...totals) - Math.min(...totals),
+        totals.reduce((sum, n) => sum + n * n, 0),
+        stats.reduce((sum, team) => sum + team.composition, 0),
+        stats.reduce((sum, team) => sum + team.history, 0)
+      ];
+    };
+    const better = (a, b) => {
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return a[i] < b[i];
+      }
+      return false;
+    };
+    let bestTeams;
+    let bestScore;
+    const started = Date.now();
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const teams = Array.from({ length: count }, () => []);
+      const ordered = shuffle(players).sort((a, b) => b.skill - a.skill);
+      ordered.forEach(player => {
+        const available = shuffle(teams.filter(team => team.length < size));
+        available.sort((a, b) => sumSkill(a) - sumSkill(b) ||
+          (describe([...a, player]).composition - describe(a).composition) -
+          (describe([...b, player]).composition - describe(b).composition));
+        available[0].push(player);
+      });
+      let stats = teams.map(describe);
+      let score = objective(stats);
+      for (let pass = 0; pass < 20; pass++) {
+        let move = null;
+        let nextScore = score;
+        for (let a = 0; a < count; a++) {
+          for (let b = a + 1; b < count; b++) {
+            for (let i = 0; i < size; i++) {
+              for (let j = 0; j < size; j++) {
+                [teams[a][i], teams[b][j]] = [teams[b][j], teams[a][i]];
+                const sa = describe(teams[a]);
+                const sb = describe(teams[b]);
+                const candidate = stats.slice();
+                candidate[a] = sa;
+                candidate[b] = sb;
+                const value = objective(candidate);
+                if (better(value, nextScore)) {
+                  nextScore = value;
+                  move = { a, b, i, j, sa, sb };
+                }
+                [teams[a][i], teams[b][j]] = [teams[b][j], teams[a][i]];
+              }
+            }
+          }
+        }
+        // Equal-total exchanges can improve composition where any single
+        // swap would temporarily worsen the skill balance (5+1 vs 3+3).
+        if (!move && size >= 3 && Date.now() - started <= 300) {
+          for (let a = 0; a < count; a++) {
+            for (let b = a + 1; b < count; b++) {
+              for (let i = 0; i < size; i++) {
+                for (let k = i + 1; k < size; k++) {
+                  for (let j = 0; j < size; j++) {
+                    for (let l = j + 1; l < size; l++) {
+                      if (teams[a][i].skill + teams[a][k].skill !==
+                          teams[b][j].skill + teams[b][l].skill) continue;
+                      [teams[a][i], teams[b][j]] = [teams[b][j], teams[a][i]];
+                      [teams[a][k], teams[b][l]] = [teams[b][l], teams[a][k]];
+                      const sa = describe(teams[a]);
+                      const sb = describe(teams[b]);
+                      const candidate = stats.slice();
+                      candidate[a] = sa;
+                      candidate[b] = sb;
+                      const value = objective(candidate);
+                      if (better(value, nextScore)) {
+                        nextScore = value;
+                        move = { a, b, i, j, k, l, sa, sb };
+                      }
+                      [teams[a][i], teams[b][j]] = [teams[b][j], teams[a][i]];
+                      [teams[a][k], teams[b][l]] = [teams[b][l], teams[a][k]];
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (!move) break;
+        const { a, b, i, j, sa, sb } = move;
+        [teams[a][i], teams[b][j]] = [teams[b][j], teams[a][i]];
+        if (move.k !== undefined) {
+          [teams[a][move.k], teams[b][move.l]] = [teams[b][move.l], teams[a][move.k]];
+        }
+        stats[a] = sa;
+        stats[b] = sb;
+        score = nextScore;
+        if (Date.now() - started > 300) break;
+      }
+      if (!bestScore || better(score, bestScore)) {
+        bestScore = score;
+        bestTeams = teams.map(team => [...team]);
+      }
+      if (Date.now() - started > 300) break;
+    }
+
+    // Pair only after every team has been balanced. Pair history can no
+    // longer create separate strength tiers on different courts.
+    const remaining = shuffle(bestTeams);
+    const gameGroups = [];
+    for (let court = 0; court < plan.playableCourts; court++) {
+      const team1 = remaining.shift();
+      let opponent = 0;
+      for (let i = 1; i < remaining.length; i++) {
+        if (matchupHistoryScore(team1, remaining[i], historyStats) <
+            matchupHistoryScore(team1, remaining[opponent], historyStats)) opponent = i;
+      }
+      const team2 = remaining.splice(opponent, 1)[0];
+      gameGroups.push({ split: { team1, team2 } });
+    }
+    return { gameGroups, waitingGroups: remaining.map(players => ({ players })) };
+  }
+
   function createTeamObject(
     players,
     name,
@@ -1915,7 +2053,7 @@
       );
 
     const structure =
-      createSessionStructure(
+      createGloballyBalancedStructure(
         teamPlayers,
         plan,
         historyStats
