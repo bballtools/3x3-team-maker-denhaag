@@ -726,7 +726,51 @@ function saveEveningSession() {
 
 
 
+function gameCounterButtons(roundIndex, gameIndex, game) {
+  return `<div class="game-counter-actions">
+    <span>${GameCounter.count(game)} completed</span>
+    <button type="button" data-game-round="${roundIndex}" data-game-index="${gameIndex}" data-game-change="1">+1 game completed</button>
+    <button type="button" class="secondary" data-game-round="${roundIndex}" data-game-index="${gameIndex}" data-game-change="-1" ${GameCounter.count(game) === 0 ? "disabled" : ""}>Undo 1 game</button>
+  </div>`;
+}
+
+function renderGameCounter() {
+  const panel = document.getElementById("gameCounterPanel");
+  if (!panel) return;
+  const historyOpen = panel.querySelector("details")?.open || false;
+  const totals = GameCounter.totals(approvedFormations);
+  const names = new Map(players.map(player => [player.id, player.name]));
+  approvedFormations.forEach(formation => (formation.participants || []).forEach(player => {
+    if (!names.has(player.id)) names.set(player.id, player.name);
+  }));
+  const ids = new Set([...presentPlayerIds, ...totals.players.keys()]);
+  const entries = [...ids].map(id => ({ id, name: names.get(id) || id, count: totals.players.get(id) || 0 }))
+    .sort((a, b) => a.count - b.count || a.name.localeCompare(b.name));
+  const highest = Math.max(0, ...entries.filter(entry => presentPlayerIds.has(entry.id)).map(entry => entry.count));
+  panel.hidden = approvedFormations.length === 0;
+  panel.innerHTML = `<h2>Games played</h2>
+    <p>Record each completed game once, here or on its court card. Waiting teams do not receive a game. Counts follow players when teams are remixed.</p>
+    <div class="participation-list">${entries.map(entry => `<span class="participation-player${presentPlayerIds.has(entry.id) && entry.count < highest ? " fewer-games" : ""}">${escapeHtml(entry.name)}: <strong>${entry.count}</strong>${presentPlayerIds.has(entry.id) && entry.count < highest ? " · fewer games" : ""}</span>`).join("")}</div>
+    <details ${historyOpen ? "open" : ""}><summary>Record or correct games from approved rounds</summary>
+    <p>Older rounds start at zero because completion was not previously recorded. Add games here if needed. Team letters refer to that round only.</p>
+    ${approvedFormations.map((formation, roundIndex) => (formation.matchups || []).map((game, gameIndex) =>
+      `<div class="game-history-row"><strong>Round ${escapeHtml(String(formation.round))} · Court ${escapeHtml(String(game.court || gameIndex + 1))} · ${escapeHtml(game.team1Name || "Team 1")} vs ${escapeHtml(game.team2Name || "Team 2")}</strong>${gameCounterButtons(roundIndex, gameIndex, game)}</div>`).join("")).join("")}</details>`;
+}
+
+document.addEventListener("click", event => {
+  const button = event.target.closest("button[data-game-change]");
+  if (!button || button.disabled) return;
+  const formation = approvedFormations[Number(button.dataset.gameRound)];
+  const game = formation?.matchups?.[Number(button.dataset.gameIndex)];
+  const change = Number(button.dataset.gameChange);
+  if (!game || ![1, -1].includes(change)) return;
+  game.gamesPlayed = Math.max(0, GameCounter.count(game) + change);
+  saveEveningSession();
+  if (currentResult) renderResult(currentResult, false);
+});
+
 function renderEveningHistoryStatus() {
+  renderGameCounter();
 
   if (
     !eveningHistoryStatus
@@ -1443,6 +1487,7 @@ function renderPlayers() {
 // ==================================================
 
 function updatePlayerSummary() {
+  renderGameCounter();
 
   const visiblePlayers =
     getVisiblePlayers();
@@ -2533,6 +2578,8 @@ function playerRow(
           ${escapeHtml(player.category)}
         </span>
 
+        <span class="games-badge">${GameCounter.totals(approvedFormations).players.get(player.id) || 0} games played</span>
+
       </span>
 
       <span class="result-skill">
@@ -2552,6 +2599,11 @@ function playerRow(
 
 
 function teamCard(team) {
+  const counts = GameCounter.totals(approvedFormations);
+  const played = team.players.map(player => counts.players.get(player.id) || 0);
+  const minimum = Math.min(...played);
+  const maximum = Math.max(...played);
+  const lineupGames = counts.lineups.get(GameCounter.lineupKey(team.players.map(player => player.id))) || 0;
 
   const playersHtml =
     team.players
@@ -2582,6 +2634,8 @@ function teamCard(team) {
       </div>
 
       ${playersHtml}
+
+      <p class="team-games">This lineup: ${lineupGames} games · Players: ${minimum === maximum ? minimum : `${minimum}–${maximum}`} games each</p>
 
     </div>
 
@@ -2628,6 +2682,8 @@ function rotationPlayerRow(
         <span class="category">
           ${escapeHtml(player.category)}
         </span>
+
+        <span class="games-badge">${GameCounter.totals(approvedFormations).players.get(player.id) || 0} games played</span>
 
       </span>
 
@@ -2885,6 +2941,9 @@ function createStoredFormation(
 
   return {
 
+    participants: result.teams.flatMap(team => team.players).concat(result.rotationPlayers)
+      .map(player => ({ id: player.id, name: player.name })),
+
     round:
       currentRoundNumber,
 
@@ -2912,6 +2971,11 @@ function createStoredFormation(
     matchups:
       result.courtGames.map(
         game => ({
+
+          court: game.court,
+          team1Name: game.team1.name,
+          team2Name: game.team2.name,
+          gamesPlayed: 0,
 
           team1:
             game.team1.players.map(
@@ -4386,6 +4450,8 @@ function renderResult(
           )}
 
         </div>
+
+        ${currentRoundApproved ? gameCounterButtons(approvedFormations.length - 1, result.courtGames.indexOf(game), approvedFormations[approvedFormations.length - 1].matchups[result.courtGames.indexOf(game)]) : '<p class="explanation">Approve this formation to record completed games.</p>'}
 
       `;
 
