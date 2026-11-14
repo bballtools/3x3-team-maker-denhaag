@@ -201,7 +201,7 @@
           Players
         </h2>
 
-        <p id="playerSummary">
+        <p id="playerSummary" role="status" aria-live="polite">
           Loading players...
         </p>
 
@@ -221,19 +221,18 @@
 
 
     <div
-      id="categoryTabs"
+      class="player-search" role="search" aria-label="Find players"
+    >
+      <span class="player-search-icon" aria-hidden="true">🔎</span>
+      <input id="playerSearch" type="search" placeholder="Search players…" aria-label="Search players by name" autocomplete="off" spellcheck="false" aria-controls="playerList">
+      <button id="clearPlayerSearch" type="button" class="player-search-clear" aria-label="Clear player search" title="Clear search" hidden>×</button>
+    </div>
+
+    <div id="categoryTabs"
       class="category-tabs"
     ></div>
 
 
-
-    <div class="player-search">
-      <label for="playerSearch">Search players</label>
-      <div class="player-search-controls">
-        <input id="playerSearch" type="search" placeholder="Search by name…" autocomplete="off" aria-controls="playerList">
-        <button id="clearPlayerSearch" type="button" class="secondary" hidden>Clear search</button>
-      </div>
-    </div>
 
     <div class="player-toolbar">
 

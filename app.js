@@ -1240,12 +1240,21 @@ playerSearch.addEventListener("input", () => {
   updatePlayerSummary();
 });
 
-clearPlayerSearch.addEventListener("click", () => {
+function resetPlayerSearch() {
   playerSearch.value = "";
   clearPlayerSearch.hidden = true;
   renderPlayers();
   updatePlayerSummary();
   playerSearch.focus();
+}
+
+clearPlayerSearch.addEventListener("click", resetPlayerSearch);
+
+playerSearch.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    resetPlayerSearch();
+  }
 });
 
 
@@ -1501,7 +1510,7 @@ function updatePlayerSummary() {
 
 
   playerSummary.textContent =
-    `${presentPlayerIds.size} of ${players.length} players present · ${visiblePlayers.length} shown`;
+    `${presentPlayerIds.size} of ${players.length} players present · ${visiblePlayers.length} ${playerSearch.value.trim() ? (visiblePlayers.length === 1 ? "match" : "matches") : "shown"}`;
 
 
   updateSelectAllButton();
