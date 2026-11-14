@@ -768,13 +768,55 @@ function saveEveningSession() {
 
 
 
-function gameCounterButtons(roundIndex, gameIndex, game) {
-  return `<div class="game-counter-actions">
-    <span>${GameCounter.count(game)} completed for this matchup</span>
-    <button type="button" data-game-round="${roundIndex}" data-game-index="${gameIndex}" data-game-change="1">+1 game completed</button>
-    <button type="button" class="secondary" data-game-round="${roundIndex}" data-game-index="${gameIndex}" data-game-change="-1" ${GameCounter.count(game) === 0 ? "disabled" : ""}>Undo 1 game</button>
-  </div>`;
+function latestCompletion() {
+  for (let i = approvedFormations.length - 1; i >= 0; i--) {
+    const formation = approvedFormations[i];
+    const completions = formation.completions || [];
+    for (let j = completions.length - 1; j >= 0; j--) {
+      if (!completions[j].undone) return { formation, completion: completions[j] };
+    }
+  }
+  return null;
 }
+
+function updateCompletionControls() {
+  const approved = Boolean(currentResult && currentRoundApproved && currentResult.courtGames.length);
+  document.getElementById("completeAllGames").disabled = !approved;
+  document.getElementById("undoLastCompletion").disabled = !latestCompletion();
+  const completed = (currentStoredFormation()?.completions || []).filter(completion => !completion.undone).length;
+  document.getElementById("gameCompletionStatus").textContent = approved
+    ? `${completed} shared ${completed === 1 ? "game" : "games"} completed with this formation. Each click counts all teams on court, including substitutes. Waiting teams do not receive a game.`
+    : "Approve the formation to record completed games for all courts.";
+}
+
+function completeAllGames() {
+  const formation = currentStoredFormation();
+  if (!formation || !currentResult.courtGames.length) return;
+  syncCurrentMatchups();
+  const matchupIndices = currentResult.courtGames.map(game => game.historyIndex);
+  if (new Set(matchupIndices).size !== matchupIndices.length ||
+      matchupIndices.some(index => !Number.isInteger(index) || !formation.matchups[index])) return;
+  matchupIndices.forEach(index => { formation.matchups[index].gamesPlayed = GameCounter.count(formation.matchups[index]) + 1; });
+  (formation.completions ||= []).push({ completedAt: new Date().toISOString(), matchupIndices });
+  saveEveningSession();
+  renderResult(currentResult, false);
+}
+
+function undoLastCompletion() {
+  const latest = latestCompletion();
+  if (!latest) return;
+  const { formation, completion } = latest;
+  const records = completion.matchupIndices.map(index => formation.matchups[index]);
+  if (records.some(record => !record || GameCounter.count(record) === 0)) return;
+  records.forEach(record => { record.gamesPlayed = GameCounter.count(record) - 1; });
+  completion.undone = true;
+  completion.undoneAt = new Date().toISOString();
+  saveEveningSession();
+  if (currentResult) renderResult(currentResult, false);
+}
+
+document.getElementById("completeAllGames").addEventListener("click", completeAllGames);
+document.getElementById("undoLastCompletion").addEventListener("click", undoLastCompletion);
 
 function renderGameCounter() {
   const panel = document.getElementById("gameCounterPanel");
@@ -791,25 +833,13 @@ function renderGameCounter() {
   const highest = Math.max(0, ...entries.filter(entry => presentPlayerIds.has(entry.id)).map(entry => entry.count));
   panel.hidden = approvedFormations.length === 0;
   panel.innerHTML = `<h2>Games played</h2>
-    <p>Record each completed game once, here or on its court card. Waiting teams do not receive a game. Counts follow players when teams are remixed.</p>
+    <p>Use Game completed in Round controls once when all courts finish. All team members on court, including substitutes, receive a game. Waiting teams do not. Counts follow players when teams are remixed.</p>
     <div class="participation-list">${entries.map(entry => `<span class="participation-player${presentPlayerIds.has(entry.id) && entry.count < highest ? " fewer-games" : ""}">${escapeHtml(entry.name)}: <strong>${entry.count}</strong>${presentPlayerIds.has(entry.id) && entry.count < highest ? " · fewer games" : ""}</span>`).join("")}</div>
-    <details ${historyOpen ? "open" : ""}><summary>Record or correct games from approved rounds</summary>
-    <p>Older rounds start at zero because completion was not previously recorded. Add games here if needed. Team letters refer to that round only.</p>
+    <details ${historyOpen ? "open" : ""}><summary>Completed-game history</summary>
+    <p>Team letters refer to that formation only. Previous per-court counts are preserved. Undo last completion reverses the most recent shared completion, including after team moves.</p>
     ${approvedFormations.map((formation, roundIndex) => (formation.matchups || []).map((game, gameIndex) =>
-      `<div class="game-history-row"><strong>Round ${escapeHtml(String(formation.round))} · Court ${escapeHtml(String(game.court || gameIndex + 1))} · ${escapeHtml(game.team1Name || "Team 1")} vs ${escapeHtml(game.team2Name || "Team 2")}</strong>${gameCounterButtons(roundIndex, gameIndex, game)}</div>`).join("")).join("")}</details>`;
+      `<div class="game-history-row"><strong>Round ${escapeHtml(String(formation.round))} · Court ${escapeHtml(String(game.court || gameIndex + 1))} · ${escapeHtml(game.team1Name || "Team 1")} vs ${escapeHtml(game.team2Name || "Team 2")}</strong><p>${GameCounter.count(game)} completed</p></div>`).join("")).join("")}</details>`;
 }
-
-document.addEventListener("click", event => {
-  const button = event.target.closest("button[data-game-change]");
-  if (!button || button.disabled) return;
-  const formation = approvedFormations[Number(button.dataset.gameRound)];
-  const game = formation?.matchups?.[Number(button.dataset.gameIndex)];
-  const change = Number(button.dataset.gameChange);
-  if (!game || ![1, -1].includes(change)) return;
-  game.gamesPlayed = Math.max(0, GameCounter.count(game) + change);
-  saveEveningSession();
-  if (currentResult) renderResult(currentResult, false);
-});
 
 function renderEveningHistoryStatus() {
   renderGameCounter();
@@ -2635,7 +2665,7 @@ function matchupRecord(game) {
     team1Name: game.team1.name, team2Name: game.team2.name,
     team1: game.team1.players.map(player => player.id),
     team2: game.team2.players.map(player => player.id),
-    participatingPlayerIds: game.participatingPlayerIds || game.team1.players.concat(game.team2.players).map(player => player.id),
+    participatingPlayerIds: game.team1.players.concat(game.team2.players).map(player => player.id),
     gamesPlayed: 0
   };
 }
@@ -2710,7 +2740,6 @@ function handleTeamMove(teamId) {
     if ([game.team1.id, game.team2.id].some(id => id === first.id || id === second.id)) {
       game.team1 = replace(game.team1);
       game.team2 = replace(game.team2);
-      delete game.participatingPlayerIds;
     }
   });
   currentResult.waitingTeams = currentResult.waitingTeams.map(replace);
@@ -2726,8 +2755,6 @@ function assignSubstitute(playerId, teamId) {
   team.substituteIds = [...(team.substituteIds || []), player.id];
   currentResult.rotationPlayers = currentResult.rotationPlayers.filter(candidate => candidate.id !== player.id);
   recalculateTeam(team);
-  currentResult.courtGames.filter(game => game.team1.id === team.id || game.team2.id === team.id)
-    .forEach(game => { delete game.participatingPlayerIds; });
   finishTeamChange(`${player.name} joins ${team.name} as a substitute. The game stays ${team.teamSize}v${team.teamSize}.`);
 }
 
@@ -2739,8 +2766,6 @@ function returnSubstitute(playerId, teamId) {
   team.substituteIds = team.substituteIds.filter(id => id !== playerId);
   currentResult.rotationPlayers.push(player);
   recalculateTeam(team);
-  currentResult.courtGames.filter(game => game.team1.id === team.id || game.team2.id === team.id)
-    .forEach(game => { delete game.participatingPlayerIds; });
   finishTeamChange(`${player.name} is back in unassigned rotation. Earlier game counts are unchanged.`);
 }
 
@@ -2768,19 +2793,6 @@ resultsSection.addEventListener("click", event => {
   }
   const release = event.target.closest("button[data-return-substitute]");
   if (release) returnSubstitute(release.dataset.returnSubstitute, release.dataset.teamId);
-});
-
-resultsSection.addEventListener("change", event => {
-  const input = event.target.closest("input[data-game-participant]");
-  if (!input) return;
-  const game = currentResult.courtGames.find(game => game.court === Number(input.dataset.court));
-  if (!game) return;
-  const ids = game.participatingPlayerIds || game.team1.players.concat(game.team2.players).map(player => player.id);
-  game.participatingPlayerIds = input.checked ? [...new Set([...ids, input.dataset.gameParticipant])]
-    : ids.filter(id => id !== input.dataset.gameParticipant);
-  syncCurrentMatchups();
-  if (currentRoundApproved) saveEveningSession();
-  renderResult(currentResult, false);
 });
 
 function playerRow(
@@ -4391,6 +4403,7 @@ remixButton
 // ==================================================
 
 function updateRoundControls() {
+  updateCompletionControls();
 
   if (
     !currentResult
@@ -4529,7 +4542,7 @@ function buildFormationReport() {
     ? approvedFormations.find(formation => formation.round === currentRoundNumber) : null;
   return {
     report: "3x3 Team Maker — development formation report",
-    version: 2,
+    version: 3,
     championshipMode: Boolean(currentResult.championshipMode),
     rotationRoleIds: formation?.rotationRoleIds || currentResult.rotationPlayers.map(player => player.id)
       .concat(currentResult.teams.flatMap(team => team.substituteIds || [])),
@@ -4543,7 +4556,8 @@ function buildFormationReport() {
       skill: "1 to 5 basketballs",
       lineupGamesPlayed: "Completed games with this exact set of players, across all approved rounds in this session; team letters can change.",
       playerGamesPlayed: "Completed games across all lineups in this session. Waiting and approval alone do not add games.",
-      substitutes: "A team can have one extra player while onCourtSize and game format stay unchanged. Counts include only participatingPlayerIds for each completed matchup; all roster members are selected by default.",
+      substitutes: "A team can have one extra player while onCourtSize and game format stay unchanged. New shared completions count every roster member, including substitutes. Historical participant exclusions from previous versions remain unchanged.",
+      completions: "One shared completion increments every current court matchup once. Each stored completion captures its matchup indices so undo still targets the original teams after court moves or remixing.",
       rotationFairness: "The next mix avoids rotation/substitute roles from the latest approved formation when alternatives exist, then favors players with fewer past roles. Both unassigned rotation and attached substitutes count as a role.",
       teamGamesThisFormation: "Completed games for this team ID in this formation, even if substitute assignments change. Lineup counts remain specific to an exact roster.",
       history: "Approved lineups and matchups, including rounds with zero recorded games. Older rounds without gamesPlayed are counted as zero."
@@ -4568,7 +4582,7 @@ function buildFormationReport() {
       team1: game.team1.id,
       team2: game.team2.id,
       matchupHistoryIndex: game.historyIndex ?? index,
-      participatingPlayerIds: game.participatingPlayerIds || game.team1.players.concat(game.team2.players).map(player => player.id),
+      participatingPlayerIds: game.team1.players.concat(game.team2.players).map(player => player.id),
       gamesCompletedThisMatchup: GameCounter.count(formation?.matchups?.[game.historyIndex ?? index] || {}),
       gamesCompletedThisRound: (formation?.matchups || []).filter(matchup => matchup.court === game.court)
         .reduce((sum, matchup) => sum + GameCounter.count(matchup), 0)
@@ -4627,17 +4641,6 @@ async function copyFormationReport() {
 
 document.getElementById("copyFormationReport").addEventListener("click", copyFormationReport);
 // END TEMPORARY DEVELOPER TOOLS.
-
-function participationControls(game) {
-  if (!game.team1.substituteIds?.length && !game.team2.substituteIds?.length) return "";
-  const members = game.team1.players.concat(game.team2.players);
-  const participants = game.participatingPlayerIds || members.map(player => player.id);
-  return `<fieldset class="participation-controls"><legend>Who took part in the game?</legend>
-    <p>All team members are counted by default, including substitutes who rotated in. Untick anyone who did not play before recording the completed game. Earlier games stay unchanged.</p>
-    ${[game.team1, game.team2].map(team => `<div><strong>${escapeHtml(team.name)}</strong>${team.players.map(player =>
-      `<label><input type="checkbox" data-game-participant="${escapeHtml(player.id)}" data-court="${game.court}" ${participants.includes(player.id) ? "checked" : ""}> ${escapeHtml(player.name)}${team.substituteIds?.includes(player.id) ? " (substitute)" : ""}</label>`).join("")}</div>`).join("")}
-    </fieldset>`;
-}
 
 function renderResult(
   result,
@@ -4896,9 +4899,6 @@ function renderResult(
           )}
 
         </div>
-
-        ${participationControls(game)}
-        ${currentRoundApproved ? gameCounterButtons(approvedFormations.indexOf(currentStoredFormation()), game.historyIndex ?? result.courtGames.indexOf(game), currentStoredFormation().matchups[game.historyIndex ?? result.courtGames.indexOf(game)]) : '<p class="explanation">Approve this formation to record completed games.</p>'}
 
       `;
 
