@@ -78,7 +78,6 @@ let suggestionNumber = 0;
 let currentRoundApproved = false;
 
 let selectedMoveTeamId = null;
-const championshipMode = document.getElementById("championshipMode");
 const teamMoveStatus = document.getElementById("teamMoveStatus");
 const cancelTeamMove = document.getElementById("cancelTeamMove");
 
@@ -693,7 +692,7 @@ function loadEveningSession() {
       currentResult.waitingTeams = currentResult.waitingTeams.map(team => byId.get(team.id));
       currentRoundNumber = active.round;
       currentRoundApproved = true;
-      championshipMode.checked = Boolean(currentResult.championshipMode);
+      currentResult.championshipMode = true;
       presentPlayerIds = new Set(currentResult.teams.flatMap(team => team.players)
         .concat(currentResult.rotationPlayers).map(player => player.id));
       courts = active.settings.availableBaskets;
@@ -936,7 +935,6 @@ function startNewSession() {
     [];
 
   selectedMoveTeamId = null;
-  championshipMode.checked = false;
 
 
   presentPlayerIds =
@@ -2712,7 +2710,7 @@ function finishTeamChange(message) {
 }
 
 function handleTeamMove(teamId) {
-  if (!currentResult?.championshipMode || !findTeam(teamId)) return;
+  if (!currentResult || !findTeam(teamId)) return;
   if (!selectedMoveTeamId) {
     selectedMoveTeamId = teamId;
     renderResult(currentResult, false);
@@ -2768,15 +2766,6 @@ function returnSubstitute(playerId, teamId) {
   recalculateTeam(team);
   finishTeamChange(`${player.name} is back in unassigned rotation. Earlier game counts are unchanged.`);
 }
-
-championshipMode.addEventListener("change", () => {
-  if (!currentResult) return;
-  currentResult.championshipMode = championshipMode.checked;
-  selectedMoveTeamId = null;
-  selectedSwapPlayer = null;
-  if (currentRoundApproved) saveEveningSession();
-  renderResult(currentResult, false);
-});
 
 cancelTeamMove.addEventListener("click", () => {
   selectedMoveTeamId = null;
@@ -2902,7 +2891,7 @@ function teamCard(team) {
       ${playersHtml}
 
       <p class="team-games">${team.teamSize} on court${team.substituteIds?.length ? " + 1 substitute" : ""} · Team: ${teamGames} games this formation · This lineup: ${lineupGames} games · Players: ${minimum === maximum ? minimum : `${minimum}–${maximum}`} games each</p>
-      ${currentResult.championshipMode ? `<button type="button" class="secondary move-team-button" data-move-team="${escapeHtml(team.id)}" aria-pressed="${selectedMoveTeamId === team.id}">${selectedMoveTeamId === team.id ? "Selected — cancel" : selectedMoveTeamId ? "Exchange with selected team" : "Move team"}</button>` : ""}
+      <button type="button" class="secondary move-team-button" data-move-team="${escapeHtml(team.id)}" aria-pressed="${selectedMoveTeamId === team.id}">${selectedMoveTeamId === team.id ? "Selected — cancel" : selectedMoveTeamId ? "Exchange with selected team" : "Move team"}</button>
       <div class="substitute-controls">${substituteControls}</div>
 
     </div>
@@ -4439,9 +4428,7 @@ function updateRoundControls() {
 
 
     roundActionHelp.textContent =
-      currentResult.championshipMode
-        ? `Formation ${currentRoundNumber} is approved. Record each game, then move teams manually. Reset & remix creates entirely new teams.`
-        : `Round ${currentRoundNumber} is approved. Record completed games. Enable Championship mode to bring waiting teams on without remixing.`;
+      `Formation ${currentRoundNumber} is approved. Record each game, then move teams manually. Reset & remix creates entirely new teams.`;
 
 
     return;
@@ -4650,12 +4637,13 @@ function renderResult(
   currentResult =
     result;
 
-  result.championshipMode ??= championshipMode.checked;
-  championshipMode.checked = Boolean(result.championshipMode);
+  // Retain the old field for saved-session/report compatibility. Moving teams
+  // is now standard, including when an older session saved this as false.
+  result.championshipMode = true;
   cancelTeamMove.hidden = !selectedMoveTeamId;
   teamMoveStatus.textContent = selectedMoveTeamId
     ? `${findTeam(selectedMoveTeamId)?.name || "Team"} selected. Now select the team to exchange it with, on court or waiting.`
-    : result.championshipMode ? "Use Move team on two compatible teams to exchange their positions. Record games before moving teams." : "";
+    : "Use Move team on two compatible teams to exchange their positions. Record games before moving teams.";
 
   document.getElementById("formationReportStatus").textContent = "";
   document.getElementById("formationReportText").hidden = true;
@@ -4943,9 +4931,7 @@ function renderResult(
 
 
     waitingTitle.textContent =
-      result.championshipMode ? "Waiting teams — choose manually" : result.waitingTeams.length === 1
-        ? "Next team"
-        : "Next teams";
+      "Waiting teams — choose manually";
 
 
     waitingTeams.innerHTML =
